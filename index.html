@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ぷよぷよ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Mochiy+Pop+One&family=M+PLUS+Rounded+1c:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --cell: 46px;
+    --cols: 6;
+    --rows: 12;
+    --red:    #ff5d7d;
+    --red-d:  #d63a5c;
+    --green:  #5fd06b;
+    --green-d:#3aa848;
+    --blue:   #4ea2ff;
+    --blue-d: #2f7ad6;
+    --yellow: #ffcb3d;
+    --yellow-d:#e0a510;
+    --purple: #c172ee;
+    --purple-d:#9a4ac9;
+    --ink: #2b1d3f;
+    --panel: #fff6e9;
+  }
+  *{box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;}
+  body{
+    font-family:'M PLUS Rounded 1c', sans-serif;
+    background:
+      radial-gradient(circle at 15% 12%, #4a2d6e 0%, transparent 45%),
+      radial-gradient(circle at 88% 88%, #6a2d5a 0%, transparent 50%),
+      radial-gradient(circle at 50% 50%, #35224f 0%, #251635 100%);
+    color:var(--ink);
+    min-height:100%;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    overflow:hidden;
+  }
+  /* floating background blobs */
+  .bg-blob{
+    position:fixed; border-radius:50%; filter:blur(10px); opacity:.22;
+    pointer-events:none; z-index:0;
+  }
+  .bg-blob.b1{width:220px;height:220px;background:var(--red);   top:-60px;left:-40px; animation:drift 13s ease-in-out infinite;}
+  .bg-blob.b2{width:180px;height:180px;background:var(--blue);  bottom:-50px;right:-30px; animation:drift 16s ease-in-out infinite reverse;}
+  .bg-blob.b3{width:140px;height:140px;background:var(--yellow);top:40%;right:-50px; animation:drift 19s ease-in-out infinite;}
+  @keyframes drift{
+    0%,100%{transform:translate(0,0) scale(1);}
+    50%{transform:translate(30px,-26px) scale(1.12);}
+  }
+
+  .wrap{
+    position:relative; z-index:1;
+  }
+
+  /* ===== board ===== */
+  .board{
+    position:relative;
+    width:calc(var(--cell) * var(--cols));
+    height:calc(var(--cell) * var(--rows));
+    background:
+      repeating-linear-gradient(0deg, rgba(0,0,0,.05) 0 var(--cell), transparent var(--cell) calc(var(--cell)*2)),
+      repeating-linear-gradient(90deg, rgba(0,0,0,.05) 0 var(--cell), transparent var(--cell) calc(var(--cell)*2)),
+      linear-gradient(180deg,#3a2a52,#2a1d3e);
+    overflow:hidden;
+    touch-action:none;
+    box-shadow:inset 0 6px 16px rgba(0,0,0,.55), inset 0 0 0 2px rgba(255,255,255,.06);
+  }
+
+  /* ===== puyo blob layer ===== */
+  /* one merged SVG path per same-colour connected group (board groups AND
+     the falling pair go through the same builder). eyes are a separate
+     top layer so they always stay crisp. */
+  #blobLayer{
+    position:absolute; inset:0;
+    width:100%; height:100%;
+    z-index:1;
+    pointer-events:none;
+    overflow:visible;
+  }
+  .grp{
+    filter:url(#soft);
+    transform-box:view-box;
+  }
+  .face{
+    transform-box:view-box;
+  }
+  #pairLayer{
+    transform-box:view-box;
+  }
+  .next-box .grp{ filter:none; }
+
+  /* spawn pop on the active pair */
+  #pairLayer.spawn{ animation:spawnp .26s cubic-bezier(.34,1.56,.64,1); }
+  @keyframes spawnp{
+    0%{ transform:scale(.2); }
+    100%{ transform:scale(1); }
+  }
+  /* tiny bounce on rotate */
+  #pairLayer.rpop{ animation:rpopp .2s ease; }
+  @keyframes rpopp{
+    0%{ transform:scale(.86); }
+    100%{ transform:scale(1); }
+  }
+  /* pop-on-clear: the whole connected blob pulses & vanishes as one */
+  .grp.pop{ animation:popg .42s ease forwards; }
+  @keyframes popg{
+    0%{ transform:scale(1); }
+    35%{ transform:scale(1.32); filter:brightness(1.9); }
+    100%{ transform:scale(0); filter:brightness(2.4); opacity:0; }
+  }
+  .face.pop{ animation:popf .42s ease forwards; }
+  @keyframes popf{
+    0%{ transform:scale(1); }
+    35%{ transform:scale(1.32); }
+    100%{ transform:scale(0); opacity:0; }
+  }
+  /* landing squash on just-placed puyos */
+  .face.squash{ animation:squashf .2s ease; }
+  @keyframes squashf{
+    0%{ transform:scaleY(.8) scaleX(1.12); }
+    100%{ transform:scaleY(1) scaleX(1); }
+  }
+
+  /* chain popup */
+  .chain-popup{
+    position:absolute;
+    left:50%; top:42%;
+    transform:translate(-50%,-50%) scale(0);
+    font-family:'Mochiy Pop One', sans-serif;
+    font-size:30px;
+    color:#fff;
+    text-shadow:0 3px 0 var(--red-d), 0 0 18px rgba(255,180,80,.9);
+    pointer-events:none;
+    z-index:5;
+    white-space:nowrap;
+  }
+  .chain-popup.show{animation:chainShow .8s ease forwards;}
+  @keyframes chainShow{
+    0%{transform:translate(-50%,-50%) scale(0) rotate(-12deg);}
+    25%{transform:translate(-50%,-50%) scale(1.25) rotate(6deg);}
+    45%{transform:translate(-50%,-50%) scale(1) rotate(0);}
+    80%{transform:translate(-50%,-60%) scale(1); opacity:1;}
+    100%{transform:translate(-50%,-90%) scale(.9); opacity:0;}
+  }
+
+  /* game over */
+  .overlay{
+    position:absolute; inset:0;
+    background:rgba(28,16,42,.86);
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    gap:14px; border-radius:12px;
+    opacity:0; pointer-events:none;
+    transition:opacity .35s ease;
+    z-index:10;
+  }
+  .overlay.show{opacity:1; pointer-events:auto;}
+  .overlay h2{
+    font-family:'Mochiy Pop One', sans-serif;
+    color:#fff; font-size:30px;
+    text-shadow:0 3px 0 var(--red-d);
+  }
+  .overlay .final{color:var(--yellow); font-size:20px; font-weight:800;}
+
+  /* ===== HUD overlays ===== */
+  .hud{
+    position:absolute;
+    z-index:6;
+    pointer-events:none;
+  }
+  .hud-score{
+    top:10px; right:10px;
+    background:linear-gradient(160deg,rgba(255,246,233,.96),rgba(255,231,204,.96));
+    border-radius:16px;
+    padding:6px 14px 8px;
+    text-align:right;
+    box-shadow:0 4px 0 rgba(160,110,60,.65), 0 6px 14px rgba(0,0,0,.4);
+  }
+  .hud-label{
+    display:block;
+    font-family:'Mochiy Pop One', sans-serif;
+    font-size:11px; color:var(--purple-d);
+    letter-spacing:1px;
+  }
+  .score-val{
+    font-family:'Mochiy Pop One', sans-serif;
+    font-size:26px; color:var(--ink);
+    line-height:1;
+  }
+  .score-val.bump{animation:bump .3s ease;}
+  @keyframes bump{0%{transform:scale(1);}40%{transform:scale(1.2); color:var(--red-d);}100%{transform:scale(1);}}
+
+  .hud-next{
+    top:10px; left:10px;
+    background:linear-gradient(160deg,rgba(255,246,233,.96),rgba(255,231,204,.96));
+    border-radius:16px;
+    padding:6px 8px;
+    box-shadow:0 4px 0 rgba(160,110,60,.65), 0 6px 14px rgba(0,0,0,.4);
+  }
+  .hud-next .nx-label{
+    font-family:'Mochiy Pop One', sans-serif;
+    font-size:10px; color:var(--purple-d);
+    letter-spacing:1px; text-align:center;
+    margin-bottom:2px;
+  }
+  .next-box{
+    position:relative;
+    margin:0 auto;
+  }
+
+  .btn-restart{
+    font-family:'Mochiy Pop One', sans-serif;
+    border:none; border-radius:16px;
+    padding:12px 26px; font-size:17px; color:#fff;
+    background:linear-gradient(160deg,var(--green),var(--green-d));
+    box-shadow:0 6px 0 #2a7d35, 0 9px 16px rgba(0,0,0,.4);
+    cursor:pointer;
+  }
+  .btn-restart:active{transform:translateY(4px); box-shadow:0 2px 0 #2a7d35;}
+</style>
+</head>
+<body>
+  <div class="bg-blob b1"></div>
+  <div class="bg-blob b2"></div>
+  <div class="bg-blob b3"></div>
+
+  <div class="wrap">
+    <div class="board" id="board">
+      <svg id="blobLayer" xmlns="http://www.w3.org/2000/svg">
+        <defs id="blobDefs"></defs>
+        <g id="boardBlobs"></g>
+        <g id="boardFaces"></g>
+        <g id="pairLayer"></g>
+      </svg>
+      <div class="hud hud-next">
+        <div class="nx-label">NEXT</div>
+        <div class="next-box" id="nextBox"></div>
+      </div>
+      <div class="hud hud-score">
+        <span class="hud-label">スコア</span>
+        <span class="score-val" id="score">0</span>
+      </div>
+      <div class="chain-popup" id="chainPopup"></div>
+      <div class="overlay" id="overlay">
+        <h2>ゲームオーバー</h2>
+        <div class="final" id="finalScore"></div>
+        <button class="btn-restart" id="restartBtn">もういちど</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const COLS = 6, ROWS = 12;
+  let CELL = 46;
+  const COLORS = ['red','green','blue','yellow','purple'];
+  const SVGNS = 'http://www.w3.org/2000/svg';
+
+  // colour table: c = body, d = dark rim, l = light tint for the shine
+  const CMAP = {
+    red:    { c:'#ff5d7d', d:'#d63a5c', l:'#ffd2dc' },
+    green:  { c:'#5fd06b', d:'#3aa848', l:'#d4f3d7' },
+    blue:   { c:'#4ea2ff', d:'#2f7ad6', l:'#cfe6ff' },
+    yellow: { c:'#ffcb3d', d:'#e0a510', l:'#fff0c2' },
+    purple: { c:'#c172ee', d:'#9a4ac9', l:'#ecd4fa' },
+  };
+
+  const boardEl   = document.getElementById('board');
+  const scoreEl   = document.getElementById('score');
+  const nextBox   = document.getElementById('nextBox');
+  const chainPopup= document.getElementById('chainPopup');
+  const overlay   = document.getElementById('overlay');
+  const finalScore= document.getElementById('finalScore');
+  const restartBtn= document.getElementById('restartBtn');
+  const blobLayer = document.getElementById('blobLayer');
+  const blobDefs  = document.getElementById('blobDefs');
+  const boardBlobs= document.getElementById('boardBlobs');
+  const boardFaces= document.getElementById('boardFaces');
+  const pairLayer = document.getElementById('pairLayer');
+
+  let grid, cur, next, score, chainCount, state, nextId;
+  let dropInterval, lastDrop, rafId;
+  // lookup maps rebuilt every renderBoard: "r,c" -> svg element
+  let grpAt = new Map();
+  let faceAt = new Map();
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const randColor = () => COLORS[(Math.random() * COLORS.length) | 0];
+
+  // ---- tiny sound ----
+  let actx = null;
+  function blip(freq, dur, type='sine', vol=0.12){
+    try{
+      if(!actx) actx = new (window.AudioContext||window.webkitAudioContext)();
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = type; o.frequency.value = freq;
+      o.connect(g); g.connect(actx.destination);
+      g.gain.setValueAtTime(vol, actx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+      o.start(); o.stop(actx.currentTime + dur);
+    }catch(e){}
+  }
+
+  /* =====================================================================
+     BLOB GEOMETRY
+     A connected same-colour group is rendered as ONE svg <path>: the union
+     of a circle per cell + a smooth tangent-arc "bridge" per orthogonal
+     neighbour + a filler disc in the middle of every full 2x2 block.
+     With R + F < CELL/√2 the perpendicular bridges never overlap on a
+     circle, so L-bends resolve to exposed convex arcs and no extra corner
+     fillets are needed.
+     ===================================================================== */
+  function geom(cs){
+    return { R: 0.48 * cs, F: 0.21 * cs, RIM: Math.max(2, 0.055 * cs) };
+  }
+  function ctr(r, c, cs){
+    return [ (c + 0.5) * cs, (r + 0.5) * cs ];
+  }
+  const n2 = v => v.toFixed(2);
+
+  function circP(cx, cy, rad){
+    return `M ${n2(cx-rad)},${n2(cy)} `
+         + `A ${n2(rad)},${n2(rad)} 0 1,1 ${n2(cx+rad)},${n2(cy)} `
+         + `A ${n2(rad)},${n2(rad)} 0 1,1 ${n2(cx-rad)},${n2(cy)} Z `;
+  }
+
+  // smooth bridge between two adjacent cell centres, bounded by two
+  // concave fillet arcs of radius f tangent to both circles
+  function bridgeP(c1, c2, rad, f){
+    const x1 = c1[0], y1 = c1[1], x2 = c2[0], y2 = c2[1];
+    const d  = Math.hypot(x2 - x1, y2 - y1);
+    const ux = (x2 - x1) / d, uy = (y2 - y1) / d;   // unit along
+    const nx = -uy, ny = ux;                         // unit perpendicular
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+    const p  = Math.sqrt((rad + f) * (rad + f) - (d / 2) * (d / 2));
+    const FTx = mx - nx * p, FTy = my - ny * p;      // top fillet centre
+    const FBx = mx + nx * p, FBy = my + ny * p;      // bottom fillet centre
+    const k  = rad / (rad + f);
+    const TAtx = x1 + (FTx - x1) * k, TAty = y1 + (FTy - y1) * k;
+    const TBtx = x2 + (FTx - x2) * k, TBty = y2 + (FTy - y2) * k;
+    const TAbx = x1 + (FBx - x1) * k, TAby = y1 + (FBy - y1) * k;
+    const TBbx = x2 + (FBx - x2) * k, TBby = y2 + (FBy - y2) * k;
+    const F2 = n2(f);
+    return `M ${n2(TAtx)},${n2(TAty)} `
+         + `A ${F2},${F2} 0 0,0 ${n2(TBtx)},${n2(TBty)} `
+         + `L ${n2(TBbx)},${n2(TBby)} `
+         + `A ${F2},${F2} 0 0,0 ${n2(TAbx)},${n2(TAby)} `
+         + `L ${n2(TAtx)},${n2(TAty)} Z `;
+  }
+
+  // cells: array of [r,c] integer coords (any integers; negatives ok)
+  function buildBlob(cells, cs){
+    const g = geom(cs);
+    const set = new Set(cells.map(rc => rc[0] + ',' + rc[1]));
+    const has = (r, c) => set.has(r + ',' + c);
+    let d = '';
+    for (const [r, c] of cells){
+      const m = ctr(r, c, cs);
+      d += circP(m[0], m[1], g.R);
+    }
+    for (const [r, c] of cells){
+      if (has(r, c + 1)) d += bridgeP(ctr(r, c, cs), ctr(r, c + 1, cs), g.R, g.F);
+      if (has(r + 1, c)) d += bridgeP(ctr(r, c, cs), ctr(r + 1, c, cs), g.R, g.F);
+    }
+    // close the interior hole of every full 2x2 block
+    for (const [r, c] of cells){
+      if (has(r, c + 1) && has(r + 1, c) && has(r + 1, c + 1)){
+        d += circP((c + 1) * cs, (r + 1) * cs, 0.5 * cs);
+      }
+    }
+    return d;
+  }
+
+  function eyesMarkup(cx, cy, cs){
+    const rx = 0.105 * cs, ry = 0.12 * cs, gap = 0.135 * cs;
+    const ey = cy - 0.10 * cs;
+    let s = '';
+    for (const sx of [-1, 1]){
+      const ex = cx + sx * gap;
+      s += `<ellipse cx="${n2(ex)}" cy="${n2(ey)}" rx="${n2(rx)}" ry="${n2(ry)}" fill="#fff"/>`;
+      s += `<circle cx="${n2(ex)}" cy="${n2(ey + 0.05 * cs)}" r="${n2(0.060 * cs)}" fill="#2b1d3f"/>`;
+      s += `<circle cx="${n2(ex - 0.022 * cs)}" cy="${n2(ey + 0.02 * cs)}" r="${n2(0.022 * cs)}" fill="#fff"/>`;
+    }
+    return s;
+  }
+
+  // one connected group -> <g class="grp"> with a dark rim path + body path
+  function blobGroupSVG(cells, color, cs){
+    const cm = CMAP[color];
+    const g = geom(cs);
+    const d = buildBlob(cells, cs);
+    let sx = 0, sy = 0;
+    for (const [r, c] of cells){ const m = ctr(r, c, cs); sx += m[0]; sy += m[1]; }
+    const ox = sx / cells.length, oy = sy / cells.length;
+    const dc = cells.map(rc => rc[0] + ',' + rc[1]).join(';');
+    return `<g class="grp" data-cells="${dc}" style="transform-origin:${n2(ox)}px ${n2(oy)}px">`
+         + `<path d="${d}" fill="${cm.d}" transform="translate(0,${n2(g.RIM)})"/>`
+         + `<path d="${d}" fill="url(#g-${color})"/>`
+         + `</g>`;
+  }
+
+  function faceGroupSVG(r, c, cs){
+    const m = ctr(r, c, cs);
+    return `<g class="face" data-rc="${r},${c}" style="transform-origin:${n2(m[0])}px ${n2(m[1])}px">`
+         + eyesMarkup(m[0], m[1], cs)
+         + `</g>`;
+  }
+
+  function buildDefs(){
+    let s = '';
+    for (const name of COLORS){
+      const cm = CMAP[name];
+      s += `<radialGradient id="g-${name}" cx="0.35" cy="0.28" r="0.95">`
+         + `<stop offset="0" stop-color="${cm.l}"/>`
+         + `<stop offset="0.42" stop-color="${cm.c}"/>`
+         + `<stop offset="1" stop-color="${cm.c}"/>`
+         + `</radialGradient>`;
+    }
+    const sh = n2(0.035 * CELL);
+    s += `<filter id="soft" x="-30%" y="-30%" width="160%" height="160%">`
+       + `<feDropShadow dx="0" dy="${sh}" stdDeviation="${sh}" flood-color="#1a1020" flood-opacity="0.45"/>`
+       + `</filter>`;
+    blobDefs.innerHTML = s;
+  }
+
+  // every connected same-colour component (any size, for rendering)
+  function componentsForRender(){
+    const seen = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+    const comps = [];
+    for (let r = 0; r < ROWS; r++){
+      for (let c = 0; c < COLS; c++){
+        if (seen[r][c] || !grid[r][c]) continue;
+        const color = grid[r][c].color;
+        const stack = [[r, c]];
+        seen[r][c] = true;
+        const cells = [];
+        while (stack.length){
+          const [cr, cc] = stack.pop();
+          cells.push([cr, cc]);
+          for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]){
+            const nr = cr + dr, nc = cc + dc;
+            if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+            if (seen[nr][nc] || !grid[nr][nc]) continue;
+            if (grid[nr][nc].color === color){
+              seen[nr][nc] = true;
+              stack.push([nr, nc]);
+            }
+          }
+        }
+        comps.push({ color, cells });
+      }
+    }
+    return comps;
+  }
+
+  // ---- responsive layout ----
+  function layout(){
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    CELL = Math.floor(Math.min((w - 10) / COLS, (h - 64) / ROWS, 60));
+    document.documentElement.style.setProperty('--cell', CELL + 'px');
+    const ns = Math.round(CELL * 0.62);
+    nextBox.style.width = ns + 'px';
+    nextBox.style.height = (ns * 2) + 'px';
+  }
+
+  function relayout(){
+    layout();
+    if (!grid) return;
+    buildDefs();
+    renderBoard();
+    if (cur) renderPair();
+    renderNext();
+  }
+  window.addEventListener('resize', relayout);
+  window.addEventListener('orientationchange', () => setTimeout(relayout, 200));
+
+  function pairCells(col, row, rot){
+    const axis = [row, col];
+    let sat;
+    if (rot === 0)      sat = [row - 1, col];
+    else if (rot === 1) sat = [row, col + 1];
+    else if (rot === 2) sat = [row + 1, col];
+    else                sat = [row, col - 1];
+    return [axis, sat];
+  }
+
+  function valid(col, row, rot){
+    for (const [r, c] of pairCells(col, row, rot)){
+      if (c < 0 || c >= COLS) return false;
+      if (r >= ROWS) return false;
+      if (r >= 0 && grid[r][c]) return false;
+    }
+    return true;
+  }
+
+  function init(){
+    layout();
+    grid = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+    score = 0; chainCount = 0; nextId = 1;
+    dropInterval = 780;
+    state = 'playing';
+    buildDefs();
+    boardBlobs.innerHTML = '';
+    boardFaces.innerHTML = '';
+    pairLayer.innerHTML = '';
+    grpAt.clear(); faceAt.clear();
+    next = [randColor(), randColor()];
+    overlay.classList.remove('show');
+    updateScore(false);
+    spawnPair();
+    lastDrop = performance.now();
+    if (!rafId) rafId = requestAnimationFrame(tick);
+  }
+
+  function spawnPair(){
+    cur = {
+      col: 2, row: 1, rot: 0,
+      axisColor: next[0], satColor: next[1],
+      landed: false
+    };
+    next = [randColor(), randColor()];
+    renderNext();
+    if (!valid(cur.col, cur.row, cur.rot)){
+      gameOver();
+      return;
+    }
+    renderPair('spawn');
+    lastDrop = performance.now();
+  }
+
+  // the falling pair runs through the SAME blob builder as the board:
+  // same colour -> one merged blob, different colours -> two blobs
+  function renderPair(anim){
+    if (!cur){ pairLayer.innerHTML = ''; return; }
+    const [[ar, ac], [sr, sc]] = pairCells(cur.col, cur.row, cur.rot);
+    let html = '';
+    if (cur.axisColor === cur.satColor){
+      html += blobGroupSVG([[ar, ac], [sr, sc]], cur.axisColor, CELL);
+    } else {
+      html += blobGroupSVG([[ar, ac]], cur.axisColor, CELL);
+      html += blobGroupSVG([[sr, sc]], cur.satColor, CELL);
+    }
+    html += faceGroupSVG(ar, ac, CELL);
+    html += faceGroupSVG(sr, sc, CELL);
+    pairLayer.innerHTML = html;
+    if (anim){
+      const m = ctr(ar, ac, CELL);
+      pairLayer.style.transformOrigin = `${n2(m[0])}px ${n2(m[1])}px`;
+      pairLayer.classList.remove('spawn', 'rpop');
+      void blobLayer.getBoundingClientRect();   // restart the animation
+      const cls = anim === 'spawn' ? 'spawn' : 'rpop';
+      pairLayer.classList.add(cls);
+      const dur = anim === 'spawn' ? 300 : 220;
+      setTimeout(() => pairLayer.classList.remove(cls), dur);
+    }
+  }
+
+  function renderNext(){
+    const ns = Math.round(CELL * 0.62);
+    const w = ns, h = ns * 2;
+    let body = '';
+    // axis -> bottom cell (row 1), sat -> top cell (row 0)
+    if (next[0] === next[1]){
+      body += blobGroupSVG([[1, 0], [0, 0]], next[0], ns);
+    } else {
+      body += blobGroupSVG([[1, 0]], next[0], ns);
+      body += blobGroupSVG([[0, 0]], next[1], ns);
+    }
+    body += faceGroupSVG(1, 0, ns) + faceGroupSVG(0, 0, ns);
+    nextBox.innerHTML =
+      `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" `
+      + `xmlns="${SVGNS}" style="overflow:visible;display:block">${body}</svg>`;
+  }
+
+  function renderBoard(){
+    const comps = componentsForRender();
+    let blobHTML = '', faceHTML = '';
+    for (const { color, cells } of comps){
+      blobHTML += blobGroupSVG(cells, color, CELL);
+      for (const [r, c] of cells) faceHTML += faceGroupSVG(r, c, CELL);
+    }
+    boardBlobs.innerHTML = blobHTML;
+    boardFaces.innerHTML = faceHTML;
+    // rebuild "r,c" -> element lookup maps
+    grpAt.clear(); faceAt.clear();
+    boardBlobs.querySelectorAll('.grp').forEach(g => {
+      g.dataset.cells.split(';').forEach(k => grpAt.set(k, g));
+    });
+    boardFaces.querySelectorAll('.face').forEach(g => {
+      faceAt.set(g.dataset.rc, g);
+    });
+  }
+
+  function updateScore(bump = true){
+    scoreEl.textContent = score.toLocaleString();
+    if (bump){
+      scoreEl.classList.remove('bump');
+      void scoreEl.offsetWidth;
+      scoreEl.classList.add('bump');
+    }
+  }
+
+  function showChain(n){
+    chainPopup.textContent = n + ' れんさ！';
+    chainPopup.classList.remove('show');
+    void chainPopup.offsetWidth;
+    chainPopup.classList.add('show');
+  }
+
+  // ---- game step / loop ----
+  function tick(ts){
+    rafId = requestAnimationFrame(tick);
+    if (state !== 'playing' || !cur) return;
+    if (ts - lastDrop > dropInterval){
+      lastDrop = ts;
+      step();
+    }
+  }
+
+  function step(){
+    if (valid(cur.col, cur.row + 1, cur.rot)){
+      cur.row++;
+      cur.landed = false;
+      renderPair();
+    } else {
+      if (!cur.landed){
+        cur.landed = true;
+        // grace period before lock
+        lastDrop = performance.now() - dropInterval + 380;
+      } else {
+        lockAndResolve();
+      }
+    }
+  }
+
+  async function lockAndResolve(){
+    state = 'resolving';
+    const [[ar, ac], [sr, sc]] = pairCells(cur.col, cur.row, cur.rot);
+    const placements = [[ar, ac, cur.axisColor], [sr, sc, cur.satColor]];
+    for (const [r, c, color] of placements){
+      if (r >= 0 && r < ROWS && c >= 0 && c < COLS){
+        grid[r][c] = { id: nextId++, color };
+      }
+    }
+    cur = null;
+    renderPair();                 // clears the pair layer
+    blip(180, 0.12, 'triangle', 0.14);
+    renderBoard();
+    // landing squash on the just-placed puyos
+    placements.forEach(([r, c]) => {
+      if (r >= 0 && grid[r] && grid[r][c]){
+        const f = faceAt.get(r + ',' + c);
+        if (f){ f.classList.add('squash'); setTimeout(() => f.classList.remove('squash'), 220); }
+      }
+    });
+    await sleep(120);
+    await resolve();
+    if (state !== 'gameover'){
+      state = 'playing';
+      spawnPair();
+    }
+  }
+
+  function applyGravity(){
+    for (let c = 0; c < COLS; c++){
+      let write = ROWS - 1;
+      for (let r = ROWS - 1; r >= 0; r--){
+        if (grid[r][c]){
+          const v = grid[r][c];
+          grid[r][c] = null;
+          grid[write][c] = v;
+          write--;
+        }
+      }
+    }
+  }
+
+  function findGroups(){
+    const visited = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+    const groups = [];
+    for (let r = 0; r < ROWS; r++){
+      for (let c = 0; c < COLS; c++){
+        if (visited[r][c] || !grid[r][c]) continue;
+        const color = grid[r][c].color;
+        const stack = [[r, c]];
+        const comp = [];
+        visited[r][c] = true;
+        while (stack.length){
+          const [cr, cc] = stack.pop();
+          comp.push([cr, cc]);
+          for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]){
+            const nr = cr + dr, nc = cc + dc;
+            if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+            if (visited[nr][nc] || !grid[nr][nc]) continue;
+            if (grid[nr][nc].color === color){
+              visited[nr][nc] = true;
+              stack.push([nr, nc]);
+            }
+          }
+        }
+        if (comp.length >= 4) groups.push(comp);
+      }
+    }
+    return groups;
+  }
+
+  async function resolve(){
+    while (true){
+      applyGravity();
+      renderBoard();
+      await sleep(190);
+
+      const groups = findGroups();
+      if (!groups.length) break;
+
+      chainCount++;
+      const cells = groups.flat();
+      const n = cells.length;
+      const mult = chainCount === 1 ? 1 : Math.pow(2, chainCount - 1);
+      score += n * 10 * mult;
+      updateScore();
+      showChain(chainCount);
+      blip(440 + chainCount * 120, 0.18, 'square', 0.13);
+      setTimeout(() => blip(660 + chainCount * 140, 0.22, 'sine', 0.1), 90);
+
+      // pop the whole connected blob (group <g>) + its faces as one unit
+      cells.forEach(([r, c]) => {
+        const k = r + ',' + c;
+        const g = grpAt.get(k);
+        if (g) g.classList.add('pop');
+        const f = faceAt.get(k);
+        if (f) f.classList.add('pop');
+      });
+      await sleep(420);
+      cells.forEach(([r, c]) => {
+        grid[r][c] = null;
+      });
+      await sleep(70);
+    }
+    chainCount = 0;
+  }
+
+  function gameOver(){
+    state = 'gameover';
+    cur = null;
+    pairLayer.innerHTML = '';
+    finalScore.textContent = 'スコア ' + score.toLocaleString();
+    overlay.classList.add('show');
+    blip(160, 0.5, 'sawtooth', 0.12);
+    setTimeout(() => blip(110, 0.6, 'sawtooth', 0.1), 180);
+  }
+
+  // ---- controls ----
+  function move(dx){
+    if (state !== 'playing' || !cur) return false;
+    if (valid(cur.col + dx, cur.row, cur.rot)){
+      cur.col += dx;
+      cur.landed = false;
+      renderPair();
+      return true;
+    }
+    return false;
+  }
+
+  function rotate(dir){
+    if (state !== 'playing' || !cur) return;
+    const nr = (cur.rot + dir + 4) % 4;
+    const kicks = [[0,0],[-1,0],[1,0],[0,-1],[-1,-1],[1,-1],[0,1]];
+    for (const [dc, dr] of kicks){
+      if (valid(cur.col + dc, cur.row + dr, nr)){
+        cur.col += dc; cur.row += dr; cur.rot = nr;
+        cur.landed = false;
+        renderPair('rotate');
+        blip(520, 0.06, 'sine', 0.08);
+        return;
+      }
+    }
+  }
+
+  function softDrop(){
+    if (state !== 'playing' || !cur) return;
+    if (valid(cur.col, cur.row + 1, cur.rot)){
+      cur.row++;
+      renderPair();
+      lastDrop = performance.now();
+      score += 1;
+      updateScore(false);
+    } else {
+      cur.landed = true;
+      lastDrop = performance.now() - dropInterval;
+    }
+  }
+
+  function hardDrop(){
+    if (state !== 'playing' || !cur) return;
+    let moved = 0;
+    while (valid(cur.col, cur.row + 1, cur.rot)){ cur.row++; moved++; }
+    score += moved * 2;
+    updateScore(false);
+    renderPair();
+    lockAndResolve();
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (state === 'gameover'){
+      if (e.key === 'Enter' || e.key === ' ') init();
+      return;
+    }
+    switch (e.key){
+      case 'ArrowLeft':  move(-1); e.preventDefault(); break;
+      case 'ArrowRight': move(1);  e.preventDefault(); break;
+      case 'ArrowDown':  softDrop(); e.preventDefault(); break;
+      case 'ArrowUp':
+      case 'x': case 'X': rotate(1); e.preventDefault(); break;
+      case 'z': case 'Z': rotate(-1); e.preventDefault(); break;
+      case ' ': hardDrop(); e.preventDefault(); break;
+    }
+  }, {passive:false});
+
+  // ---- touch gestures on board ----
+  // よこスワイプ=いどう / したスワイプ=はやく落とす / したフリック=いっき落とし / タップ=回転
+  let g = null;
+
+  boardEl.addEventListener('touchstart', (e) => {
+    if (state !== 'playing' || !cur){ g = null; return; }
+    if (e.target.closest('.btn-restart')) return;
+    const t = e.changedTouches[0];
+    const rect = boardEl.getBoundingClientRect();
+    g = {
+      x0: t.clientX, y0: t.clientY,
+      t0: performance.now(),
+      startCol: cur.col,
+      axis: null,
+      moved: false,
+      softAnchorY: t.clientY,
+      rectLeft: rect.left,
+      rectWidth: rect.width
+    };
+    e.preventDefault();
+  }, {passive:false});
+
+  boardEl.addEventListener('touchmove', (e) => {
+    if (!g || state !== 'playing' || !cur) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - g.x0;
+    const dy = t.clientY - g.y0;
+
+    if (!g.axis && (Math.abs(dx) > 10 || Math.abs(dy) > 10)){
+      g.axis = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+    }
+
+    if (g.axis === 'h'){
+      const targetCol = g.startCol + Math.round(dx / CELL);
+      let guard = 0;
+      while (cur.col < targetCol && guard++ < 8){ if (!move(1)) break; }
+      while (cur.col > targetCol && guard++ < 8){ if (!move(-1)) break; }
+      g.moved = true;
+    } else if (g.axis === 'v'){
+      while (t.clientY - g.softAnchorY > CELL * 0.55){
+        softDrop();
+        g.softAnchorY += CELL * 0.55;
+        g.moved = true;
+      }
+    }
+    e.preventDefault();
+  }, {passive:false});
+
+  boardEl.addEventListener('touchend', (e) => {
+    if (!g){ return; }
+    const t = e.changedTouches[0];
+    const dx = t.clientX - g.x0;
+    const dy = t.clientY - g.y0;
+    const dt = performance.now() - g.t0;
+
+    if (g.axis === 'v' && dy > CELL * 1.1 && dt < 300){
+      // 速い下フリック → いっき落とし
+      hardDrop();
+    } else if (!g.axis && dt < 280 && Math.abs(dx) < 14 && Math.abs(dy) < 14){
+      // タップ → 回転（右半分=右回り / 左半分=左回り）
+      const localX = t.clientX - g.rectLeft;
+      rotate(localX < g.rectWidth / 2 ? -1 : 1);
+    }
+    g = null;
+    e.preventDefault();
+  }, {passive:false});
+
+  boardEl.addEventListener('touchcancel', () => { g = null; });
+
+  restartBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); init(); });
+
+  init();
+})();
+</script>
+</body>
+</html>
